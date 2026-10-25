@@ -116,7 +116,10 @@ impl Grant {
     }
 
     pub fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}{}", self.redirect_port, self.redirect_path)
+        format!(
+            "http://127.0.0.1:{}{}",
+            self.redirect_port, self.redirect_path
+        )
     }
 
     pub fn redirect_path(&self) -> &'static str {
@@ -551,10 +554,9 @@ mod tests {
             })
             .expect("a released port can be listened on again");
         let (cancel, receiver) = watch::channel(false);
-        let waiting =
-            tokio::spawn(async move {
-                wait_for_code_on_listener(listener, "state", REDIRECT_PATH, receiver).await
-            });
+        let waiting = tokio::spawn(async move {
+            wait_for_code_on_listener(listener, "state", REDIRECT_PATH, receiver).await
+        });
         let mut browser = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
@@ -671,9 +673,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
-            parse_request_line("GET /favicon.ico HTTP/1.1", "s1", REDIRECT_PATH).is_err()
-        );
+        assert!(parse_request_line("GET /favicon.ico HTTP/1.1", "s1", REDIRECT_PATH).is_err());
         assert!(
             parse_request_line(
                 "GET /login?error=access_denied&state=s1 HTTP/1.1",
@@ -691,7 +691,9 @@ mod tests {
             "http://127.0.0.1:8989/ncspot_login"
         );
         assert_eq!(
-            Grant::personal_web_api("personal-client").unwrap().redirect_uri(),
+            Grant::personal_web_api("personal-client")
+                .unwrap()
+                .redirect_uri(),
             "http://127.0.0.1:8989/login"
         );
         assert_eq!(
@@ -702,18 +704,22 @@ mod tests {
 
     #[test]
     fn shared_callback_path_is_required() {
-        assert!(parse_request_line(
-            "GET /ncspot_login?code=abc&state=s1 HTTP/1.1",
-            "s1",
-            SHARED_WEB_REDIRECT_PATH,
-        )
-        .is_ok());
-        assert!(parse_request_line(
-            "GET /login?code=abc&state=s1 HTTP/1.1",
-            "s1",
-            SHARED_WEB_REDIRECT_PATH,
-        )
-        .is_err());
+        assert!(
+            parse_request_line(
+                "GET /ncspot_login?code=abc&state=s1 HTTP/1.1",
+                "s1",
+                SHARED_WEB_REDIRECT_PATH,
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_request_line(
+                "GET /login?code=abc&state=s1 HTTP/1.1",
+                "s1",
+                SHARED_WEB_REDIRECT_PATH,
+            )
+            .is_err()
+        );
     }
 
     #[test]
