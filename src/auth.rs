@@ -35,6 +35,9 @@ pub const PLAYBACK_REDIRECT_PORT: u16 = 8898;
 pub const DEFAULT_WEB_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 pub const WEB_REDIRECT_PORT: u16 = 8989;
 
+/// The shared Web API client has its own callback path so it cannot be
+/// confused with the Spotify desktop client's callback on the same port.
+pub const SHARED_WEB_REDIRECT_PATH: &str = "/ncspot_login";
 pub const REDIRECT_PATH: &str = "/login";
 
 /// Playback: what librespot needs to stream and join Spotify Connect.
@@ -76,6 +79,7 @@ const REFRESH_MARGIN: Duration = Duration::from_secs(90);
 pub struct Grant {
     pub client_id: String,
     pub redirect_port: u16,
+    pub redirect_path: &'static str,
     pub scopes: &'static [&'static str],
 }
 
@@ -84,6 +88,7 @@ impl Grant {
         Self {
             client_id: PLAYBACK_CLIENT_ID.to_string(),
             redirect_port: PLAYBACK_REDIRECT_PORT,
+            redirect_path: REDIRECT_PATH,
             scopes: PLAYBACK_SCOPES,
         }
     }
@@ -92,6 +97,7 @@ impl Grant {
         Self {
             client_id: DEFAULT_WEB_CLIENT_ID.to_string(),
             redirect_port: WEB_REDIRECT_PORT,
+            redirect_path: SHARED_WEB_REDIRECT_PATH,
             scopes: WEB_SCOPES,
         }
     }
@@ -104,12 +110,17 @@ impl Grant {
         Ok(Self {
             client_id: client_id.to_string(),
             redirect_port: WEB_REDIRECT_PORT,
+            redirect_path: REDIRECT_PATH,
             scopes: WEB_SCOPES,
         })
     }
 
     pub fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}{REDIRECT_PATH}", self.redirect_port)
+        format!("http://127.0.0.1:{}{}", self.redirect_port, self.redirect_path)
+    }
+
+    pub fn redirect_path(&self) -> &'static str {
+        self.redirect_path
     }
 }
 
@@ -178,6 +189,7 @@ pub fn listen_for_redirect(port: u16) -> Result<TcpListener> {
 pub async fn wait_for_code_on_listener(
     listener: TcpListener,
     expected_state: &str,
+    expected_path: &str,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<String> {
     let deadline = tokio::time::sleep(LOGIN_TIMEOUT);
@@ -199,7 +211,7 @@ pub async fn wait_for_code_on_listener(
             Ok(Ok(_)) if request_line.ends_with('\n') => {}
             _ => continue,
         }
-        let outcome = parse_request_line(&request_line, expected_state);
+        let outcome = parse_request_line(&request_line, expected_state, expected_path);
         let (status, body) = match &outcome {
             Ok(_) => ("200 OK", success_page()),
             Err(error) => ("400 Bad Request", failure_page(&error.to_string())),
@@ -221,13 +233,13 @@ pub async fn wait_for_code_on_listener(
     }
 }
 
-fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
+fn parse_request_line(line: &str, expected_state: &str, expected_path: &str) -> Result<String> {
     let target = line
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| anyhow!("malformed request"))?;
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    if path != REDIRECT_PATH {
+    if path != expected_path {
         bail!("unexpected redirect path");
     }
     let mut code = None;
@@ -516,7 +528,7 @@ mod tests {
             "GET /login?error=dummy-authorization-secret&state=ok HTTP/1.1",
             "GET /dummy-authorization-secret HTTP/1.1",
         ] {
-            let error = super::parse_request_line(request, "ok").unwrap_err();
+            let error = super::parse_request_line(request, "ok", REDIRECT_PATH).unwrap_err();
             assert!(!format!("{error:?} {error}").contains("dummy-authorization-secret"));
         }
     }
@@ -540,9 +552,9 @@ mod tests {
             .expect("a released port can be listened on again");
         let (cancel, receiver) = watch::channel(false);
         let waiting =
-            tokio::spawn(
-                async move { wait_for_code_on_listener(listener, "state", receiver).await },
-            );
+            tokio::spawn(async move {
+                wait_for_code_on_listener(listener, "state", REDIRECT_PATH, receiver).await
+            });
         let mut browser = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
@@ -579,7 +591,7 @@ mod tests {
             .await
             .unwrap();
         let (_cancel, receiver) = watch::channel(false);
-        let code = wait_for_code_on_listener(listener, "state", receiver)
+        let code = wait_for_code_on_listener(listener, "state", REDIRECT_PATH, receiver)
             .await
             .unwrap();
         assert_eq!(code, "test-code");
@@ -644,14 +656,64 @@ mod tests {
 
     #[test]
     fn request_line_parsing() {
-        let code =
-            parse_request_line("GET /login?code=abc%20d&state=s1 HTTP/1.1\r\n", "s1").unwrap();
+        let code = parse_request_line(
+            "GET /login?code=abc%20d&state=s1 HTTP/1.1\r\n",
+            "s1",
+            REDIRECT_PATH,
+        )
+        .unwrap();
         assert_eq!(code, "abc d");
-        assert!(parse_request_line("GET /login?code=abc&state=other HTTP/1.1", "s1").is_err());
-        assert!(parse_request_line("GET /favicon.ico HTTP/1.1", "s1").is_err());
         assert!(
-            parse_request_line("GET /login?error=access_denied&state=s1 HTTP/1.1", "s1").is_err()
+            parse_request_line(
+                "GET /login?code=abc&state=other HTTP/1.1",
+                "s1",
+                REDIRECT_PATH,
+            )
+            .is_err()
         );
+        assert!(
+            parse_request_line("GET /favicon.ico HTTP/1.1", "s1", REDIRECT_PATH).is_err()
+        );
+        assert!(
+            parse_request_line(
+                "GET /login?error=access_denied&state=s1 HTTP/1.1",
+                "s1",
+                REDIRECT_PATH,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn each_grant_uses_its_registered_callback_path() {
+        assert_eq!(
+            Grant::shared_web_api().redirect_uri(),
+            "http://127.0.0.1:8989/ncspot_login"
+        );
+        assert_eq!(
+            Grant::personal_web_api("personal-client").unwrap().redirect_uri(),
+            "http://127.0.0.1:8989/login"
+        );
+        assert_eq!(
+            Grant::playback().redirect_uri(),
+            "http://127.0.0.1:8898/login"
+        );
+    }
+
+    #[test]
+    fn shared_callback_path_is_required() {
+        assert!(parse_request_line(
+            "GET /ncspot_login?code=abc&state=s1 HTTP/1.1",
+            "s1",
+            SHARED_WEB_REDIRECT_PATH,
+        )
+        .is_ok());
+        assert!(parse_request_line(
+            "GET /login?code=abc&state=s1 HTTP/1.1",
+            "s1",
+            SHARED_WEB_REDIRECT_PATH,
+        )
+        .is_err());
     }
 
     #[test]

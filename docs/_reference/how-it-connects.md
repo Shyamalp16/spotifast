@@ -115,7 +115,10 @@ browser approval. Upgrading to protected storage does not itself require
 signing in again.
 
 By default, Spotifast uses the public app shared with spotify-player, ncspot,
-and Omarchy Spotify. Spotify divides its quota among all users. A personal app
+and Omarchy Spotify. Its loopback callback is
+`http://127.0.0.1:8989/ncspot_login`; personal apps and local playback use
+their own `/login` callback. Spotify divides the shared app's quota among all
+users. A personal app
 adds a separate Development Mode quota. Playback state is checked every 15
 seconds, every 20 while this computer's player is active, every 30 while the
 window cannot be seen and nothing plays, every 4 while the window is visible

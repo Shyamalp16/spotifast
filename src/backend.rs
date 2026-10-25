@@ -3185,8 +3185,13 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
-                let code = crate::auth::wait_for_code_on_listener(listener, &flow.state, cancel_rx)
-                    .await?;
+                let code = crate::auth::wait_for_code_on_listener(
+                    listener,
+                    &flow.state,
+                    grant.redirect_path(),
+                    cancel_rx,
+                )
+                .await?;
                 let response =
                     crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await?;
                 crate::auth::StoredToken::from_response(&grant.client_id, response, None)
@@ -3611,8 +3616,13 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let result = async {
-                let code = crate::auth::wait_for_code_on_listener(listener, &flow.state, cancel_rx)
-                    .await?;
+                let code = crate::auth::wait_for_code_on_listener(
+                    listener,
+                    &flow.state,
+                    grant.redirect_path(),
+                    cancel_rx,
+                )
+                .await?;
                 crate::auth::exchange_code(&http, &grant, &code, &flow.verifier).await
             }
             .await;
