@@ -44,7 +44,7 @@ jobs:
         run: |
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) { ${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe }
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           New-Item -ItemType Directory -Force dist | Out-Null
           & $iscc "/DVersion=$version" "/DArch=x86_64" "/DBinary=$PWD\target\x86_64-pc-windows-msvc\release\spotifast.exe" "/DOutputDir=$PWD\dist" packaging\windows\spotifast.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
